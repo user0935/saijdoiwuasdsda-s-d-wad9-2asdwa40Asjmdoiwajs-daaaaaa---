@@ -1,0 +1,141 @@
+class RedditScrollerBehavior {
+  static match(url) {
+    try {
+      const urlObj = new URL(url);
+      if (urlObj.hostname.startsWith('old.reddit.com')) {
+        return false;
+      }
+      return urlObj.hostname.includes('reddit.com') && urlObj.pathname.startsWith('/r/');
+    } catch (e) {
+      console.error('[Reddit Behavior] Invalid URL provided to match function:', url, e);
+      return false;
+    }
+  }
+
+  async #wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async #clickFirstVisible(selector, text) {
+    const lowerCaseText = text.toLowerCase();
+    const elements = Array.from(document.querySelectorAll(selector));
+
+    for (const el of elements) {
+      const isVisible = el.offsetParent !== null;
+      if (isVisible && el.innerText.toLowerCase().includes(lowerCaseText)) {
+        try {
+          console.log(`[Reddit Behavior] Found visible element to click: "${el.innerText.trim()}"`);
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await this.#wait(500);
+          el.click();
+          console.log(`[Reddit Behavior] Successfully clicked element containing "${text}".`);
+          return true;
+        } catch (e) {
+          console.warn(`[Reddit Behavior] Failed to click element with text "${text}".`, e);
+        }
+      }
+    }
+    return false;
+  }
+
+  async #expandComments(ctx) {
+    console.log('[Reddit Behavior] Comment page detected. Expanding all comments.');
+    const maxIterations = 100;
+    let iterations = 0;
+    let consecutiveFailures = 0;
+    const maxConsecutiveFailures = 3;
+
+    while (iterations < maxIterations) {
+      iterations++;
+      console.log(`[Reddit Behavior] Comment expansion attempt #${iterations}`);
+
+      let wasClicked = await this.#clickFirstVisible('button', 'load more comments');
+      if (!wasClicked) {
+        wasClicked = await this.#clickFirstVisible('span', 'more replies');
+      }
+
+      if (wasClicked) {
+        consecutiveFailures = 0;
+        await ctx.wait(3000);
+      } else {
+        consecutiveFailures++;
+        console.log(`[Reddit Behavior] No expandable comment elements found. Failure count: ${consecutiveFailures}`);
+        if (consecutiveFailures >= maxConsecutiveFailures) {
+          console.log('[Reddit Behavior] Ending comment expansion loop.');
+          break;
+        }
+        await ctx.wait(1500);
+      }
+    }
+
+    if (iterations >= maxIterations) {
+      console.warn(`[Reddit Behavior] Reached max comment expansion iterations (${maxIterations}).`);
+    }
+
+    console.log('[Reddit Behavior] Comment expansion complete. Performing final scroll.');
+    await ctx.scroll({ timeout: 90000, direction: 'down' });
+  }
+
+  async #handleInfiniteScroll(ctx) {
+    console.log('[Reddit Behavior] Listing page detected. Starting infinite scroll.');
+    const maxScrolls = 200;
+    let scrollCount = 0;
+    let consecutiveHeightFailures = 0;
+    const maxConsecutiveHeightFailures = 3;
+
+    let lastHeight = 0;
+
+    while (scrollCount < maxScrolls) {
+      lastHeight = document.body.scrollHeight;
+      console.log(`[Reddit Behavior] Scrolling down... (Attempt ${scrollCount + 1})`);
+      await ctx.scroll({ direction: 'down' });
+      await ctx.wait(4000);
+
+      const newHeight = document.body.scrollHeight;
+
+      if (newHeight > lastHeight) {
+        console.log(`[Reddit Behavior] Page height increased to ${newHeight}px.`);
+        consecutiveHeightFailures = 0;
+      } else {
+        consecutiveHeightFailures++;
+        console.log(`[Reddit Behavior] Page height did not increase. Failure count: ${consecutiveHeightFailures}`);
+        if (consecutiveHeightFailures >= maxConsecutiveHeightFailures) {
+          console.log('[Reddit Behavior] Page height has not changed. Assuming end of content.');
+          break;
+        }
+      }
+      scrollCount++;
+    }
+
+    if (scrollCount >= maxScrolls) {
+        console.warn(`[Reddit Behavior] Reached max scrolls (${maxScrolls}). Ending infinite scroll.`);
+    }
+  }
+
+  async #handleWikiPage(ctx) {
+    console.log('[Reddit Behavior] Wiki page detected. Performing a full scroll to ensure all content is loaded.');
+    await ctx.scroll({ timeout: 60000, direction: 'down' });
+    console.log('[Reddit Behavior] Wiki page scroll complete.');
+  }
+
+  async run(ctx) {
+    console.log(`[Reddit Behavior] Starting on URL: ${ctx.url}`);
+    const url = new URL(ctx.url);
+    const pathname = url.pathname;
+
+    const isCommentPage = /^\/r\/[^/]+\/comments\//.test(pathname);
+    const isWikiPage = /^\/r\/[^/]+\/wiki\//.test(pathname);
+
+    if (isCommentPage) {
+      await this.#expandComments(ctx);
+    } else if (isWikiPage) {
+      await this.#handleWikiPage(ctx);
+    } else {
+      await this.#handleInfiniteScroll(ctx);
+    }
+
+    console.log('[Reddit Behavior] Behavior finished successfully.');
+  }
+}
+
+module.exports = RedditScrollerBehavior;
