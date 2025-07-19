@@ -1,0 +1,79 @@
+// reddit-behavior.js
+class RedditScrollerBehavior {
+  static match(url) {
+    const urlObj = new URL(url);
+    if (urlObj.hostname.startsWith('old.reddit.com')) {
+      return false;
+    }
+    return urlObj.hostname.includes('reddit.com') && urlObj.pathname.includes('/r/');
+  }
+
+  async clickFirstVisible(selector, text) {
+    const elements = Array.from(document.querySelectorAll(selector));
+    const lowerCaseText = text.toLowerCase();
+
+    for (const el of elements) {
+      const isVisible = el.offsetParent !== null;
+      if (isVisible && el.innerText.toLowerCase().includes(lowerCaseText)) {
+        try {
+          console.log(`[Reddit Behavior] Found element to click: "${el.innerText.trim()}"`);
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 250));
+          el.click();
+          return true;
+        } catch (e) {
+          console.warn(`[Reddit Behavior] Failed to click element with text "${text}".`, e);
+        }
+      }
+    }
+    return false;
+  }
+
+  async scrollToBottom(ctx, scrollDelay = 1000, maxScrolls = 30) {
+    let lastScrollHeight = 0;
+    for (let i = 0; i < maxScrolls; i++) {
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise(resolve => setTimeout(resolve, scrollDelay));
+      const currentScrollHeight = document.body.scrollHeight;
+      if (currentScrollHeight === lastScrollHeight) {
+        console.log('[Reddit Behavior] Reached bottom of the page.');
+        break;
+      }
+      lastScrollHeight = currentScrollHeight;
+    }
+  }
+
+  async run(ctx) {
+    console.log(`[Reddit Behavior] Starting on: ${ctx.url}`);
+
+    const maxIterations = 50;
+    let iterations = 0;
+
+    while (iterations < maxIterations) {
+      iterations++;
+      console.log(`[Reddit Behavior] Expansion attempt #${iterations}`);
+
+      let wasClicked = await this.clickFirstVisible('button', 'load more comments');
+      if (!wasClicked) {
+        wasClicked = await this.clickFirstVisible('span', 'more replies');
+      }
+
+      if (!wasClicked) {
+        console.log('[Reddit Behavior] No more expandable elements found. Ending expansion loop.');
+        break;
+      }
+
+      await ctx.wait(2500);
+    }
+
+    if (iterations >= maxIterations) {
+      console.warn(`[Reddit Behavior] Reached max iterations (${maxIterations}). Moving to final scroll.`);
+    }
+
+    console.log('[Reddit Behavior] Performing final scroll to capture lazy-loaded media.');
+    await this.scrollToBottom(ctx);
+    console.log('[Reddit Behavior] Behavior finished successfully.');
+  }
+}
+
+module.exports = RedditScrollerBehavior;
